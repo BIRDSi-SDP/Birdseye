@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Birdseye Chat</title>
+    <style>
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div id="auth-container">
+        <h2>Login</h2>
+        <form id="login-form">
+            <input type="text" id="username" placeholder="Username" required>
+            <input type="password" id="password" placeholder="Password" required>
+            <button type="submit">Login</button>
+        </form>
+        <h2>Register</h2>
+        <form id="register-form">
+            <input type="text" id="reg-username" placeholder="Username" required>
+            <input type="password" id="reg-password" placeholder="Password" required>
+            <button type="submit">Register</button>
+        </form>
+    </div>
+
+    <div id="chat-interface" class="hidden">
+        <button onclick="logout()">Logout</button>
+        <button onclick="switchTheme()">Switch Theme</button>
+
+        <div class="container">
+            <div id="friends-list">
+                <h3>Friends</h3>
+                <div>
+                    <input type="text" id="add-friend-input" placeholder="Enter username">
+                    <button onclick="sendFriendRequest()">Add Friend</button>
+                </div>
+                <div id="friend-list-container"></div>
+                
+                <h4>Pending Friend Requests</h4>
+                <div id="pending-requests-container"></div>
+            </div>
+
+            <div id="chat-area">
+                <div id="chat-container"></div>
+                <div>
+                    <input type="text" id="message-input" placeholder="Type a message...">
+                    <button onclick="sendMessage()">Send</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        let userId;
+        let currentUser;
+        let socket;
+        let currentChat;
+
+        document.getElementById('login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            login();
+        });
+
+        document.getElementById('register-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            register();
+        });
+
+        function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            fetch('/login', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, password }),
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Login failed');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Login successful:', data);
+                userId = data.userId;
+                currentUser = username;
+                
+                document.getElementById('auth-container').classList.add('hidden');
+                document.getElementById('chat-interface').classList.remove('hidden');
+                
+                socket = io();
+                
+                socket.on('connect', function() {
+                    console.log('Connected to server');
+                    socket.emit('authenticate', {userId: userId});
+                    fetchFriends();
+                    fetchPendingFriendRequests();
+                });
+
+                socket.on('new_message', function(data) {
+                    displayMessage(data);
+                });
+
+                socket.on('new_friend_request', function(data) {
+                    console.log('New friend request from:', data.from);
+                    fetchPendingFriendRequests();
+                });
+
+                socket.on('friend_request_accepted', function(data) {
+                    console.log('Friend request accepted by:', data.friend);
+                    fetchFriends();
+                });
+
+                setInterval(fetchPendingFriendRequests, 30000);
+
+                document.getElementById('chat-container').innerHTML = '';
+
+                fetch(`/messages/${username}`)
+                    .then(response => response.json())
+                    .then(messages => {
+                        messages.forEach(displayMessage);
+                    })
+                    .catch(error => console.error('Error fetching messages:', error));
+            })
+            .catch(error => {
+                console.error('Login error:', error);
+                alert('Login failed. Please check your username and password.');
+            });
+        }
+
+        function register() {
+            const username = document.getElementById('reg-username').value;
+            const password = document.getElementById('reg-password').value;
+
+            fetch('/register', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ username, password }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Registration successful:', data);
+                alert('Registration successful. Please login.');
+            })
+            .catch(error => {
+                console.error('Registration error:', error);
+                alert('Registration failed. Please try again.');
+            });
+        }
+
+        function logout() {
+            fetch('/logout', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ userId: userId }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Logout successful:', data);
+                socket.disconnect();
+                document.getElementById('auth-container').classList.remove('hidden');
+                document.getElementById('chat-interface').classList.add('hidden');
+                userId = null;
+                currentUser = null;
+                currentChat = null;
+            })
+            .catch(error => console.error('Logout error:', error));
+        }
+
+        function switchTheme() {
+            document.body.classList.toggle('dark-theme');
+        }
+
+        function fetchFriends() {
+            fetch(`/friends/${currentUser}`)
+                .then(response => response.json())
+                .then(friends => {
+                    const container = document.getElementById('friend-list-container');
+                    container.innerHTML = '';
+                    friends.forEach(friend => {
+                        const friendElement = document.createElement('div');
+                        friendElement.textContent = friend;
+                        friendElement.onclick = () => startChat(friend);
+                        container.appendChild(friendElement);
+                    });
+                })
+                .catch(error => console.error('Error fetching friends:', error));
+        }
+
+        function fetchPendingFriendRequests() {
+            fetch(`/pending-friend-requests/${currentUser}`)
+                .then(response => response.json())
+                .then(requests => {
+                    const container = document.getElementById('pending-requests-container');
+                    container.innerHTML = '';
+                    requests.forEach(request => {
+                        const requestElement = document.createElement('div');
+                        requestElement.innerHTML = `
+                            <span>${request.from_username} wants to be your friend</span>
+                            <button onclick="acceptFriendRequest(${request.id})">Accept</button>
+                            <button onclick="denyFriendRequest(${request.id})">Deny</button>
+                        `;
+                        container.appendChild(requestElement);
+                    });
+                })
+                .catch(error => console.error('Error fetching pending friend requests:', error));
+        }
+
+        function sendFriendRequest() {
+            const toUsername = document.getElementById('add-friend-input').value;
+            fetch('/send-friend-request', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ fromUsername: currentUser, toUsername: toUsername }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data.message);
+                alert('Friend request sent');
+            })
+            .catch(error => console.error('Error sending friend request:', error));
+        }
+
+        function acceptFriendRequest(requestId) {
+            fetch('/accept-friend-request', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ requestId: requestId, username: currentUser }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data.message);
+                fetchPendingFriendRequests();
+                fetchFriends();
+            })
+            .catch(error => console.error('Error accepting friend request:', error));
+        }
+
+        function denyFriendRequest(requestId) {
+            fetch('/deny-friend-request', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ requestId: requestId, username: currentUser }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log(data.message);
+                fetchPendingFriendRequests();
+            })
+            .catch(error => console.error('Error denying friend request:', error));
+        }
+
+        function startChat(friendUsername) {
+            currentChat = friendUsername;
+            document.getElementById('chat-container').innerHTML = '';
+            fetch(`/messages/${currentUser}`)
+                .then(response => response.json())
+                .then(messages => {
+                    messages.filter(msg => 
+                        (msg.from === currentUser && msg.to === friendUsername) ||
+                        (msg.from === friendUsername && msg.to === currentUser)
+                    ).forEach(displayMessage);
+                })
+                .catch(error => console.error('Error fetching messages:', error));
+        }
+
+        function sendMessage() {
+            if (!currentChat) {
+                alert('Please select a friend to chat with first.');
+                return;
+            }
+            const content = document.getElementById('message-input').value;
+            socket.emit('message', { from: currentUser, to: currentChat, content: content });
+            document.getElementById('message-input').value = '';
+        }
+
+        function displayMessage(message) {
+            const messageElement = document.createElement('div');
+            messageElement.textContent = `${message.from}: ${message.content}`;
+            document.getElementById('chat-container').appendChild(messageElement);
+        }
+    </script>
+</body>
+</html>
