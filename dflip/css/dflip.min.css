@@ -2,4 +2,8 @@
     background-color: transparent !important;
     /* Ensure no other styles are applied */
     background: none !important;
+}.linkAnnotation {
+    background-color: transparent !important;
+    /* Ensure no other styles are applied */
+    background: none !important;
 }
